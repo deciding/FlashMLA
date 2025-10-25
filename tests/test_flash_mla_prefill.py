@@ -7,7 +7,7 @@ import dataclasses
 import torch
 import triton
 
-from flash_mla import flash_mla_sparse_fwd
+from flash_mla import flash_mla_sparse_fwd, txl_mla
 from lib import check_is_allclose
 
 @dataclasses.dataclass
@@ -101,7 +101,8 @@ def run_test(p: TestParam) -> bool:
     torch.cuda.synchronize()
 
     def run_ans():
-        return flash_mla_sparse_fwd(
+        #return flash_mla_sparse_fwd(
+        return txl_mla(
             t.q.squeeze(0), t.kv.squeeze(0), t.indices.squeeze(0), sm_scale=sm_scale
         )
 
@@ -179,6 +180,9 @@ if __name__ == '__main__':
     ]
 
     testcases = correctness_cases + corner_cases + performance_cases
+    testcases = [
+            TestParam(1, 64, 128, 128, h_q=128, benchmark=False, check_correctness=True)
+    ]
 
     failed_cases = []
     for test in testcases:

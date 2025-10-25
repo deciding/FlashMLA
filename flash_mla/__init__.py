@@ -8,3 +8,5 @@ from flash_mla.flash_mla_interface import (
     flash_attn_varlen_kvpacked_func,
     flash_mla_sparse_fwd
 )
+
+from flash_mla.txl_interface import txl_mla
