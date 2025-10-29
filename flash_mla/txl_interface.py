@@ -38,7 +38,6 @@ def txl_mla0(
         B_TOPK : tl.constexpr,
         STRIDE_KV_NOPE_0: tl.constexpr,
         STRIDE_KV_PE_0: tl.constexpr,
-        o2_desc,
        ):
 
     tid = txl.tid(0)
@@ -333,11 +332,10 @@ def txl_mla0(
             txl.bar_wait(warpgroup0_sync, 128)
             txl.tma_store(cur_sO, o_desc, [offs_q, 0])
         else:
-            cur_sO1 = txl.smem_slice(sO, 256, 256, 1)
-            txl.smem_store(cur_sO1, cur_rO)
+            cur_sO = txl.smem_slice(sO, 256, 256, 1)
+            txl.smem_store(cur_sO, cur_rO)
             txl.bar_wait(warpgroup1_sync, 128)
-            #txl.tma_store(cur_sO, o_desc, [offs_q, 256])
-            txl.tma_store(cur_sO1, o2_desc, [offs_q, 0])
+            txl.tma_store(cur_sO, o_desc, [offs_q, 256])
 
         #txl.bar_wait(warpgroup0_sync, 128)
         #o_desc.store(cur_rO, [offs_q, 0])
@@ -455,8 +453,12 @@ def txl_mla0(
             cur_bar_wait_phase ^= 1
 
 def txl_mla(
-        q: torch.Tensor,
-        kv: torch.Tensor,
+        #q: torch.Tensor,
+        #kv: torch.Tensor,
+        q_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        kv_nope: torch.Tensor,
+        kv_pe: torch.Tensor,
         indices: torch.Tensor,
         sm_scale: float,
         d_v: int = 512,
@@ -502,34 +504,30 @@ def txl_mla(
     D_K = D_Q
     D_V = 512
 
-    s_q = q.size(0)
-    s_kv = kv.size(0)
+    s_q = q_nope.size(0)
+    s_kv = kv_nope.size(0)
     top_k = indices.size(2)
-    h_q = q.size(1)
+    h_q = q_nope.size(1)
 
-    h_kv = kv.size(1)
+    h_kv = kv_nope.size(1)
     assert h_kv == 1
     d_qk = D_Q
     d_v = D_V
 
     qk_scale = sm_scale * 1.44269504
 
-    #    q: [s_q, h_q, d_qk], bfloat16
-    #    kv: [s_kv, h_kv, d_qk], bfloat16
-    #    indices: [s_q, h_kv, topk], int32. Invalid indices should be set to -1 or numbers >= s_kv
+    #q_nope, q_pe = torch.split(q, [512, 64], dim=-1)
+    #q_nope = q_nope.contiguous()
+    #q_pe = q_pe.contiguous()
 
-    q_nope, q_pe = torch.split(q, [512, 64], dim=-1)
-    q_nope = q_nope.contiguous()
-    q_pe = q_pe.contiguous()
-
-    kv_nope, kv_pe = torch.split(kv, [512, 64], dim=-1)
-    kv_nope = kv_nope.contiguous()
-    kv_pe = kv_pe.contiguous()
+    #kv_nope, kv_pe = torch.split(kv, [512, 64], dim=-1)
+    #kv_nope = kv_nope.contiguous()
+    #kv_pe = kv_pe.contiguous()
 
 
-    out = torch.empty((s_q, h_q, d_v), dtype=q.dtype, device=q.device)
-    max_logits = torch.empty((s_q, h_q), dtype=torch.float32, device=q.device)
-    lse = torch.empty((s_q, h_q), dtype=torch.float32, device=q.device)
+    out = torch.empty((s_q, h_q, d_v), dtype=q_nope.dtype, device=q_nope.device)
+    max_logits = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
+    lse = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
 
     q_nope_desc = TensorDescriptor(q_nope, (s_q*h_q, 512), (512, 1), [B_H, 512])
     q_pe_desc = TensorDescriptor(q_pe, (s_q*h_q, 64), (64, 1), [B_H, 64])
@@ -538,17 +536,16 @@ def txl_mla(
     lse_desc = TensorDescriptor(lse, (s_q*h_q, ), (1, ), [B_H])
 
     # TESTS
-    out1 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
-    out2 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
-    o1_desc = TensorDescriptor(out1, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
-    o2_desc = TensorDescriptor(out2, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
+    #out1 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
+    #out2 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
+    #o1_desc = TensorDescriptor(out1, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
+    #o2_desc = TensorDescriptor(out2, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
 
     NUM_HEAD_BLOCKS = h_q // B_H
     txl_mla0[(NUM_HEAD_BLOCKS * s_q,)](
             q_nope_desc, q_pe_desc,
             kv_nope, kv_pe,
-            #o_desc,
-            o1_desc,
+            o_desc,
             max_logits_desc, lse_desc,
             indices,
 
@@ -560,7 +557,5 @@ def txl_mla(
             B_TOPK,
             kv_nope.stride(0),
             kv_pe.stride(0),
-            o2_desc,
             num_warps=4, num_warpgroups=3)
-    #return out,  max_logits, lse
-    return torch.cat([out1, out2], dim=-1),  max_logits, lse
+    return out, max_logits, lse

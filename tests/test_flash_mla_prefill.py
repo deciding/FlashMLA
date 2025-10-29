@@ -100,11 +100,24 @@ def run_test(p: TestParam) -> bool:
     sm_scale = 1 / math.sqrt(p.d_qk)
     torch.cuda.synchronize()
 
+    q = t.q.squeeze(0)
+    kv = t.kv.squeeze(0)
+
+    q_nope, q_pe = torch.split(q, [512, 64], dim=-1)
+    q_nope = q_nope.contiguous()
+    q_pe = q_pe.contiguous()
+
+    kv_nope, kv_pe = torch.split(kv, [512, 64], dim=-1)
+    kv_nope = kv_nope.contiguous()
+    kv_pe = kv_pe.contiguous()
+
     def run_ans():
         return flash_mla_sparse_fwd(
-        #return txl_mla(
             t.q.squeeze(0), t.kv.squeeze(0), t.indices.squeeze(0), sm_scale=sm_scale
         )
+        #return txl_mla(
+        #    q_nope, q_pe, kv_nope, kv_pe, t.indices.squeeze(0), sm_scale=sm_scale
+        #)
 
     ans_out, ans_max_logits, ans_lse = run_ans()
     torch.cuda.synchronize()
