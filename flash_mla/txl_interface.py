@@ -17,7 +17,8 @@ sL_ready = tl.constexpr(12)
 warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
 @txl.jit
-#@txl.jit(diff_mode="ttgir", log_dir='dump/')
+#@txl.jit(src_file='dump/smem/SKCNG6F2XUQBA3XUKJ4ASFQM2E6HEJDVNB3J2MBCN23UCKHYIFJQ/txl_mla0.ptx')
+#@txl.jit(diff_mode="llir", log_dir='dump/')
 #@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
@@ -37,6 +38,7 @@ def txl_mla0(
         B_TOPK : tl.constexpr,
         STRIDE_KV_NOPE_0: tl.constexpr,
         STRIDE_KV_PE_0: tl.constexpr,
+        o2_desc,
        ):
 
     tid = txl.tid(0)
@@ -206,6 +208,7 @@ def txl_mla0(
             rS = rP.to(tl.bfloat16) # p = p.to(dtype)
 
             # wg0 save half, then wg1 save whole
+            # TODO: syncwarp?
             if idx_in_warpgroup % 4 == 0: # only store for every 4 because they are the same
                 #txl.frag_smem_store(sM, new_maxs, layout_sM)
                 txl.smem_store(sM, new_maxs) # TODO: remove the layout of frag_smem_store
@@ -330,10 +333,11 @@ def txl_mla0(
             txl.bar_wait(warpgroup0_sync, 128)
             txl.tma_store(cur_sO, o_desc, [offs_q, 0])
         else:
-            cur_sO = txl.smem_slice(sO, 256, 256, 1)
-            txl.smem_store(cur_sO, cur_rO)
+            cur_sO1 = txl.smem_slice(sO, 256, 256, 1)
+            txl.smem_store(cur_sO1, cur_rO)
             txl.bar_wait(warpgroup1_sync, 128)
-            txl.tma_store(cur_sO, o_desc, [offs_q, 256])
+            #txl.tma_store(cur_sO, o_desc, [offs_q, 256])
+            txl.tma_store(cur_sO1, o2_desc, [offs_q, 0])
 
         #txl.bar_wait(warpgroup0_sync, 128)
         #o_desc.store(cur_rO, [offs_q, 0])
@@ -474,7 +478,23 @@ def txl_mla(
         - max_logits:  [s_q, h_q], float
         - lse: [s_q, h_q], float, 2-based log-sum-exp
     """
-    # Example usage
+    #dump_dir='dump/smem/'
+    dump_dir = None
+
+    from triton import knobs
+    import os
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-smem-alloc-legalize"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-smem-alloc-layout-conversions"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    knobs.runtime.override_arch='sm90'
+    #knobs.autotuning.print=True
+    #knobs.compilation.always_compile=True
+
+    if dump_dir:
+        knobs.compilation.dump_ir=True
+        knobs.cache.dump_dir=dump_dir
+
 
     B_H = 64
     B_TOPK = 64
@@ -517,11 +537,18 @@ def txl_mla(
     max_logits_desc = TensorDescriptor(max_logits, (s_q*h_q, ), (1, ), [B_H])
     lse_desc = TensorDescriptor(lse, (s_q*h_q, ), (1, ), [B_H])
 
+    # TESTS
+    out1 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
+    out2 = torch.empty((s_q, h_q, d_v//2), dtype=q.dtype, device=q.device)
+    o1_desc = TensorDescriptor(out1, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
+    o2_desc = TensorDescriptor(out2, (s_q*h_q, d_v//2), (d_v//2, 1), [B_H, D_V//2])
+
     NUM_HEAD_BLOCKS = h_q // B_H
     txl_mla0[(NUM_HEAD_BLOCKS * s_q,)](
             q_nope_desc, q_pe_desc,
             kv_nope, kv_pe,
-            o_desc,
+            #o_desc,
+            o1_desc,
             max_logits_desc, lse_desc,
             indices,
 
@@ -533,5 +560,7 @@ def txl_mla(
             B_TOPK,
             kv_nope.stride(0),
             kv_pe.stride(0),
+            o2_desc,
             num_warps=4, num_warpgroups=3)
-    return out,  max_logits, lse
+    #return out,  max_logits, lse
+    return torch.cat([out1, out2], dim=-1),  max_logits, lse

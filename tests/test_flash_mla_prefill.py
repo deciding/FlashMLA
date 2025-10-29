@@ -101,8 +101,8 @@ def run_test(p: TestParam) -> bool:
     torch.cuda.synchronize()
 
     def run_ans():
-        #return flash_mla_sparse_fwd(
-        return txl_mla(
+        return flash_mla_sparse_fwd(
+        #return txl_mla(
             t.q.squeeze(0), t.kv.squeeze(0), t.indices.squeeze(0), sm_scale=sm_scale
         )
 
@@ -119,6 +119,7 @@ def run_test(p: TestParam) -> bool:
         torch.cuda.synchronize()
         ref_max_logits, ref_lse, ref_out = reference_torch(p, t, sm_scale)
         torch.cuda.synchronize()
+        res = (ans_out-ref_out)
 
         is_correct = True
         is_correct &= check_is_allclose("out", ans_out, ref_out, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=7e-6)
@@ -181,7 +182,7 @@ if __name__ == '__main__':
 
     testcases = correctness_cases + corner_cases + performance_cases
     testcases = [
-            TestParam(1, 64, 128, 128, h_q=128, benchmark=False, check_correctness=True)
+            TestParam(1, 64, 128, 128, h_q=128, benchmark=True, check_correctness=True)
     ]
 
     failed_cases = []
