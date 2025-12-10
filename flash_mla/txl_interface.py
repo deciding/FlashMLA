@@ -18,7 +18,8 @@ warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
 @txl.jit
 #@txl.jit(src_file='dump/smem/SKCNG6F2XUQBA3XUKJ4ASFQM2E6HEJDVNB3J2MBCN23UCKHYIFJQ/txl_mla0.ptx')
-#@txl.jit(diff_mode="llir", log_dir='dump/')
+#@txl.jit(diff_mode="ttgir", log_dir='dump/')
+#@txl.jit(diff_mode="ttgir", log_dir='dump/')
 #@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
@@ -46,6 +47,8 @@ def txl_mla0(
     s_q_idx = pid // NUM_HEAD_BLOCKS
     q_h_idx = pid % NUM_HEAD_BLOCKS
     NUM_TOPK_BLOCKS: tl.constexpr = TOPK // B_TOPK
+    #if txl.thread0():
+    #    txl.print('hello')
 
 
     offs_q = pid * B_H
@@ -107,7 +110,6 @@ def txl_mla0(
         txl.mbar_wait(mbar_q_nope, 0)
         txl.mbar_wait(mbar_q_pe, 0)
 
-        rP = tl.zeros([B_H, B_TOPK], dtype=tl.float32)
         rM = tl.zeros([B_H], dtype=tl.float32) - float("inf") # m_i
         rL = tl.zeros([B_H], dtype=tl.float32) # l_i
         rO = tl.zeros([B_H, 256], dtype=tl.float32) # D_V//2
@@ -129,6 +131,7 @@ def txl_mla0(
         sV1r = sKnope1r
 
         for block_idx in range(0, NUM_TOPK_BLOCKS, 2):
+            rP = tl.zeros([B_H, B_TOPK], dtype=tl.float32)
             # iter (-1) rP0 = sQ @ sK0
             if txl.is_warpgroup([0]):
                 if block_idx == 0:
@@ -480,7 +483,7 @@ def txl_mla(
         - max_logits:  [s_q, h_q], float
         - lse: [s_q, h_q], float, 2-based log-sum-exp
     """
-    #dump_dir='dump/smem/'
+    dump_dir='dump/smem/'
     dump_dir = None
 
     from triton import knobs
@@ -491,7 +494,7 @@ def txl_mla(
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.runtime.override_arch='sm90'
     #knobs.autotuning.print=True
-    #knobs.compilation.always_compile=True
+    knobs.compilation.always_compile=True
 
     if dump_dir:
         knobs.compilation.dump_ir=True
